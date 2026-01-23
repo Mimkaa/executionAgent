@@ -1,0 +1,5 @@
+
+
+ action=HOTKEY { "keys": ["ALT","TAB"] }
+
+if you think that everything works and all the libraries are connected successfully add to the main class functionality to produce a .ready file and your work will be done

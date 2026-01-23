@@ -1,0 +1,356 @@
+STECHEN PIPELINE SPEC — MINI-CLASS CONSTRUCTION EXECUTION MODEL
+==============================================================
+
+This document defines the rules of use for the STECHEN pipeline system.
+It describes the mandatory libraries, available scripts, and the core
+execution model based on constructing and executing Java mini-classes.
+
+No natural-language mapping rules are included.
+Only the operational and mechanical structure is defined.
+
+
+CORE IDEA
+---------
+A STECHEN pipeline executes a task by constructing small Java classes
+step-by-step in the current working directory and then executing them.
+
+Each pipeline step performs ONE concrete mechanical action.
+
+The fundamental construction pattern is:
+
+    DynamicClassCreator
+        → CreateTextFile
+            → DynamicDelegateCreator
+                → ClassMethodCloner / ClassFieldCloner
+                    → RunClass
+
+Explanation:
+1) A base Java class is created (initially minimal / stub).
+2) Desired logic (method or field) is written into a text file.
+3) A delegate Java class is generated from that text file.
+4) The delegate EXTENDS the base class.
+5) Exactly one method or field is cloned from the delegate into the base class.
+6) The base class accumulates final behavior and may be executed.
+
+
+MANDATORY LIBRARIES (COMPULSORY)
+--------------------------------
+The following libraries MUST be installed and loaded before any class
+construction or cloning may occur:
+
+    DynamicJarLoader --library net.bytebuddy:byte-buddy:1.15.3
+
+
+    DynamicJarLoader --library org.ow2.asm:asm:9.8
+
+
+    DynamicJarLoader --library org.ow2.asm:asm-tree:9.8
+
+
+    DynamicJarLoader --library org.ow2.asm:asm-commons:9.8
+
+
+    DynamicJarLoader --library org.ow2.asm:asm-util:9.8
+
+
+    DynamicJarLoader --library org.json:json:20240303
+
+
+Rule 1 — No DynamicClassCreator, ClassMethodCloner, or ClassFieldCloner
+may be executed before ALL mandatory libraries are loaded.
+
+
+AVAILABLE SCRIPTS
+-----------------
+
+CreateDirectory
+description:
+    Creates a directory with the given name.
+usage:
+    CreateDirectory --name <DirectoryName>
+
+
+DynamicJarLoader
+description:
+    Downloads and loads a Maven library into the environment.
+usage:
+    DynamicJarLoader --library <groupId:artifactId:version>
+
+
+DynamicClassCreator
+description:
+    Creates a base Java class (stub) with the given name.
+usage:
+    DynamicClassCreator --name <ClassName>
+
+
+CreateTextFile
+description:
+    Creates or overwrites a text file used as source for delegate generation.
+usage:
+    CreateTextFile --name <FileName>
+    CreateTextFile --name <FileName> --contentB64 <payload>
+notes:
+    - <payload> may be pre-encoded base64 OR raw text if Rule 9.1 is supported.
+
+
+DynamicDelegateCreator
+description:
+    Generates a delegate Java class from a text file.
+    The delegate class EXTENDS the base class.
+usage (method delegate):
+    DynamicDelegateCreator --parent <BaseClass>
+                           --methodFile <FileName>.txt
+                           --outputDir .
+usage (field delegate):
+    DynamicDelegateCreator --parent <BaseClass>
+                           --fieldFile <FileName>.txt
+                           --outputDir .
+
+
+ClassMethodCloner
+description:
+    Clones exactly ONE method bytecode from a delegate class
+    into the base class.
+usage:
+    ClassMethodCloner --classNameToModify <BaseClass>
+                      --delegateclass <DelegateClass>
+                      --method <MethodName>
+
+
+ClassFieldCloner
+description:
+    Clones exactly ONE field from a delegate class
+    into the base class.
+usage:
+    ClassFieldCloner --classNameToModify <BaseClass>
+                     --delegateclass <DelegateClass>
+                     --field <FieldName>
+
+
+RunClass
+description:
+    Executes the main method of a compiled class.
+usage:
+    RunClass --class <ClassName>
+
+
+YOU ARE ALLOWED TO USE ONLY THESE SCRIPTS.
+
+
+FORBIDDEN SCRIPT
+----------------
+
+CreateTextFileFromBase64
+
+STATUS: ❌ FORBIDDEN — MUST NOT BE USED
+
+Rationale:
+CreateTextFileFromBase64 bypasses critical pipeline invariants and has been
+observed to:
+
+- overwrite valid source files unintentionally
+- erase method bodies after successful creation
+- desynchronize planner intent from executor state
+- cause repeated delegate generation with empty or invalid sources
+- lead to non-terminating semantic failure loops
+
+Rule F1 — CreateTextFileFromBase64 is NOT PART of the STECHEN pipeline.
+It MUST NOT be emitted by the planner.
+It MUST NOT be executed by the executor.
+
+Rule F2 — Any pipeline step containing CreateTextFileFromBase64
+is INVALID and MUST be rejected or ignored.
+
+Rule F3 — All delegate source files MUST be created using:
+    CreateTextFile --name <FileName> --contentB64 <payload>
+
+Rule F4 — There is exactly ONE allowed source-file creation mechanism.
+No alternatives are permitted.
+
+
+GLOBAL PIPE RULES
+-----------------
+Rule 2 — Pipeline execution is strictly sequential.
+
+Rule 3 — Commands must be separated by EXACTLY two blank lines.
+
+Rule 4 — All source files, class files, jars, and text files live in
+the current working directory.
+
+Rule 5 — Delegate classes are intermediate artifacts only.
+The base class is the final accumulated result.
+
+Rule 6 — Exactly ONE field OR ONE method may be cloned per pipeline step.
+No batching is allowed.
+
+Rule 6.1 — METHOD CLONING OVERRIDES EXISTING METHODS.
+If the base class already contains a method with the same
+name + descriptor (same signature),
+ClassMethodCloner REPLACES the existing method entirely.
+
+Implications:
+- Re-cloning the same method name is the supported way to update behavior.
+- The last successful clone of a given method signature is authoritative.
+
+Rule 7 — Dependency order is strict:
+- Fields must exist before methods that reference them.
+- Methods must exist before other methods that call them.
+
+Rule 7.1 — Delegate source filenames MUST include `.txt`.
+DynamicDelegateCreator expects a real file path.
+Do NOT omit the `.txt` extension.
+
+Rule 8 — Delegate classes are transient.
+Only the base class persists as the final executable artifact.
+
+
+FIELD CLONING CLARIFICATION (IMPORTANT)
+---------------------------------------
+Rule 8.1 — ClassFieldCloner clones ONLY the FIELD DEFINITION
+(name + type descriptor).
+
+It does NOT reliably clone:
+- initialization values
+- initializer bytecode
+- constructor logic
+
+Therefore:
+- Treat field cloning as declaring storage only.
+- Perform ALL initialization via runtime methods
+  (constructor, init() method, or main()).
+
+Rule 8.2 — FIELD CLONING DOES NOT OVERWRITE.
+If the base class already contains a field with the same
+name + type descriptor, the field is NOT replaced.
+
+Implications:
+- Fields are declared once.
+- Changing field semantics requires a NEW field name.
+
+
+STANDARD METHOD CONSTRUCTION PIPELINE
+-------------------------------------
+Goal: Add ONE method to a base class <BaseClass>.
+
+1) Ensure base class exists:
+       DynamicClassCreator --name <BaseClass>
+
+2) Write method source into a text file:
+       CreateTextFile --name <MethodFile>
+                      --contentB64 <method source>
+
+Rule 6.2 — Method source is REQUIRED.
+The method file MUST contain a complete method definition.
+Empty or invalid files cause cloning to fail.
+
+3) Generate delegate class:
+       DynamicDelegateCreator --parent <BaseClass>
+                              --methodFile <MethodFile>.txt
+                              --outputDir .
+
+4) Clone method into base class:
+       ClassMethodCloner --classNameToModify <BaseClass>
+                         --delegateclass DynamicDelegate
+                         --method <MethodName>
+
+5) Repeat steps 2–4 for each additional method.
+
+6) Execute the class (if main exists):
+       RunClass --class <BaseClass>
+
+
+STANDARD FIELD CONSTRUCTION PIPELINE
+------------------------------------
+Goal: Add ONE field to a base class <BaseClass>.
+
+1) Ensure base class exists:
+       DynamicClassCreator --name <BaseClass>
+
+2) Write field source into a text file:
+       CreateTextFile --name <FieldFile>
+                      --contentB64 <field source>
+
+3) Generate delegate containing the field:
+       DynamicDelegateCreator --parent <BaseClass>
+                              --fieldFile <FieldFile>.txt
+                              --outputDir .
+
+4) Clone field into base class:
+       ClassFieldCloner --classNameToModify <BaseClass>
+                        --delegateclass DynamicDelegate
+                        --field <FieldName>
+
+5) Initialize the field via a METHOD (never via initializer).
+
+
+
+
+
+EXAMPLE PIPE — NUMBER GUESSING GAME
+==================================
+
+DynamicJarLoader --library net.bytebuddy:byte-buddy:1.15.3
+
+
+DynamicJarLoader --library org.ow2.asm:asm:9.8
+
+
+DynamicJarLoader --library org.ow2.asm:asm-tree:9.8
+
+
+DynamicJarLoader --library org.ow2.asm:asm-commons:9.8
+
+
+DynamicJarLoader --library org.ow2.asm:asm-util:9.8
+
+
+DynamicJarLoader --library org.json:json:20240303
+
+
+DynamicClassCreator --name GuessGame
+
+
+CreateTextFile --name FieldGuessGameTarget --contentB64 public int target;
+
+
+DynamicDelegateCreator --parent GuessGame --fieldFile FieldGuessGameTarget.txt --outputDir .
+
+
+ClassFieldCloner --classNameToModify GuessGame --delegateclass DynamicDelegate --field target
+
+
+CreateTextFile --name MethodInitTarget --contentB64 public void initTarget(){java.util.Random r=new java.util.Random();target=1+r.nextInt(100);}
+
+
+DynamicDelegateCreator --parent GuessGame --methodFile MethodInitTarget.txt --outputDir .
+
+
+ClassMethodCloner --classNameToModify GuessGame --delegateclass DynamicDelegate --method initTarget
+
+
+CreateTextFile --name MethodPlay --contentB64 public void play(){java.util.Scanner sc=new java.util.Scanner(System.in);System.out.println("Guess a number 1..100");while(true){System.out.print("> ");if(!sc.hasNextInt()){sc.nextLine();System.out.println("Type an integer.");continue;}int g=sc.nextInt();if(g<target){System.out.println("Higher");}else if(g>target){System.out.println("Lower");}else{System.out.println("Correct!");break;}}}
+
+
+DynamicDelegateCreator --parent GuessGame --methodFile MethodPlay.txt --outputDir .
+
+
+ClassMethodCloner --classNameToModify GuessGame --delegateclass DynamicDelegate --method play
+
+
+CreateTextFile --name MethodMain --contentB64 public static void main(String[] args){GuessGame game=new GuessGame();game.initTarget();game.play();}
+
+
+DynamicDelegateCreator --parent GuessGame --methodFile MethodMain.txt --outputDir .
+
+
+ClassMethodCloner --classNameToModify GuessGame --delegateclass DynamicDelegate --method main
+
+
+RunClass --class GuessGame
+
+
+IF YOU SEE THE SAME ERROR AFTER 2 CIRCLES OF ATTEMPTS TO FIX IT JUST CREATE A NEW CLASS AND TRY A DIFFERENT STRATEGY
+
+END OF SPEC
+-----------
