@@ -57,9 +57,7 @@ networkx==3.6.1
 ninja==1.13.0
 numpy==1.26.4
 openai==2.14.0
-opencv-contrib-python==4.10.0.84
-opencv-python==4.12.0.88
-opencv-python-headless==4.12.0.88
+opencv-python-headless==4.10.0.84
 orjson==3.11.5
 ormsgpack==1.12.1
 packaging==23.2
