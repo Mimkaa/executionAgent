@@ -15,10 +15,12 @@
 #   2) read created_outputs.json
 #   3) ensure ../executorOutput exists
 #   4) copy each listed file from CURRENT DIR -> ../executorOutput/
-#   5) create a small python runner script in ../executorOutput that:
+#   5) copy RunClass.class and RunClass.java from CURRENT DIR -> ../executorOutput/  (PACKAGING)
+#   6) copy created_outputs.json -> ../executorOutput/
+#   7) create an OFFLINE-SAFE python runner in ../executorOutput that:
 #        - reads created_outputs.json
-#        - copies created_outputs from its directory into a temp run dir
-#        - runs the .class listed under dynamic_class_creator_class using java -cp
+#        - runs: java -cp ".:./*" RunClass --class <dynamic_class_creator_class>
+#        - DOES NOT attempt to copy anything from the agent folder
 
 import json
 import os
@@ -344,7 +346,7 @@ def bootstrap_bytebuddy() -> bool:
 
 
 # ==========================================================
-# Post-halt: copy created outputs to ../executorOutput
+# Post-halt: copy created outputs + RunClass.* into ../executorOutput
 # ==========================================================
 
 def load_created_outputs_payload(path: Path) -> Dict[str, Any]:
@@ -386,26 +388,49 @@ def copy_outputs_to_executor_output(created_outputs: List[str]) -> None:
         print(f"[executorOutput] Missing/failed: {missing}")
 
 
+def copy_runclass_to_executor_output() -> None:
+    """
+    Copies RunClass.class and RunClass.java from CURRENT working directory (executionAgent)
+    into ../executorOutput so the pulled zip is self-contained.
+    """
+    EXECUTOR_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    copied = 0
+    for name in ("RunClass.class", "RunClass.java"):
+        src = (CWD / name).resolve()
+        if not src.exists() or not src.is_file():
+            print(f"[executorOutput] WARN: missing {name} in agent dir: {src}")
+            continue
+
+        dst = EXECUTOR_OUTPUT_DIR / name
+        try:
+            shutil.copy2(src, dst)
+            copied += 1
+            print(f"[executorOutput] Copied: {name}")
+        except Exception as e:
+            print(f"[executorOutput] WARN: failed to copy {name}: {e}")
+
+    if copied == 0:
+        print("[executorOutput] WARN: RunClass files were not copied (none found).")
+
+
 def write_executor_runner_script(executor_dir: Path, created_outputs_json_name: str = "created_outputs.json") -> Path:
     """
     Creates ../executorOutput/run_RunClass.py
 
-    The generated runner (run_RunClass.py), when executed inside executorOutput:
-      - reads created_outputs_json_name to get "dynamic_class_creator_class"
-      - copies RunClass.class from the executionAgent folder (parent of executorOutput) into executorOutput (if missing)
-      - runs: java -cp ".:./*" RunClass --class <targetClass>
-        (Windows uses ';' separator automatically)
+    OFFLINE-SAFE: assumes RunClass.class is already present in executorOutput
+    (it is copied there by copy_runclass_to_executor_output()).
     """
     runner_path = executor_dir / "run_RunClass.py"
 
     content = f'''\
 # run_RunClass.py
 #
-# Reads "{created_outputs_json_name}" in this folder to find "dynamic_class_creator_class",
-# ensures RunClass.class exists here (copied from the executionAgent folder = parent of executorOutput),
-# then runs:
-#
-#   java -cp <THIS_DIR and all jars> RunClass --class <dynamic_class_creator_class>
+# OFFLINE-SAFE runner:
+# - assumes RunClass.class is already present in this folder
+# - reads "{created_outputs_json_name}" to obtain "dynamic_class_creator_class"
+# - runs:
+#     java -cp <THIS_DIR and all jars> RunClass --class <target>
 #
 # Usage:
 #   python run_RunClass.py
@@ -415,18 +440,13 @@ def write_executor_runner_script(executor_dir: Path, created_outputs_json_name: 
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CREATED_JSON = HERE / "{created_outputs_json_name}"
-
-# Assumption: executorOutput is a sibling of executionAgent directory,
-# so HERE.parent points to the executionAgent folder.
-SOURCE_RUNCLASS = (HERE.parent / "RunClass.class").resolve()
-TARGET_RUNCLASS = HERE / "RunClass.class"
+RUNCLASS_CLASS = HERE / "RunClass.class"
 
 
 def read_payload():
@@ -441,17 +461,7 @@ def read_payload():
     return obj
 
 
-def ensure_runclass():
-    if TARGET_RUNCLASS.exists():
-        return
-    if not SOURCE_RUNCLASS.exists():
-        raise SystemExit(f"[ERR] RunClass.class not found at {{SOURCE_RUNCLASS}}")
-    shutil.copy2(SOURCE_RUNCLASS, TARGET_RUNCLASS)
-    print(f"[OK] Copied RunClass.class -> {{TARGET_RUNCLASS}}")
-
-
 def normalize_class_arg(s: str) -> str:
-    # Accept "WebcamAscii.class" or "WebcamAscii"
     s = s.strip()
     if s.lower().endswith(".class"):
         s = s[:-6]
@@ -459,14 +469,13 @@ def normalize_class_arg(s: str) -> str:
 
 
 def build_classpath() -> str:
-    # Include THIS DIR plus all jars in this dir via wildcard.
-    # Windows uses ';' separator, Unix uses ':'.
     sep = ";" if os.name == "nt" else ":"
     return sep.join([".", "./*"])
 
 
 def main():
-    ensure_runclass()
+    if not RUNCLASS_CLASS.exists():
+        raise SystemExit("[ERR] RunClass.class missing in this folder; it must be copied into executorOutput during packaging.")
 
     payload = read_payload()
     dyn = payload.get("dynamic_class_creator_class")
@@ -477,7 +486,6 @@ def main():
 
     java_bin = os.getenv("JAVA_BIN", "java")
     cp = build_classpath()
-
     cmd = [java_bin, "-cp", cp, "RunClass", "--class", target]
 
     print("[RUN]", " ".join(cmd))
@@ -503,7 +511,6 @@ if __name__ == "__main__":
 '''
     runner_path.write_text(content, encoding="utf-8")
     return runner_path
-
 
 
 # ==========================================================
@@ -602,7 +609,10 @@ def main():
     except Exception as e:
         print(f"[executorOutput] WARN: could not copy created_outputs.json: {e}")
 
-    # CREATE runner script in executorOutput
+    # Copy RunClass.* into executorOutput BEFORE writing runner (so pulled zip is self-contained)
+    copy_runclass_to_executor_output()
+
+    # CREATE OFFLINE-SAFE runner script in executorOutput
     runner_path = write_executor_runner_script(EXECUTOR_OUTPUT_DIR, created_outputs_json_name=CREATED_OUTPUTS_JSON.name)
     print(f"[executorOutput] Wrote runner: {runner_path}")
 
