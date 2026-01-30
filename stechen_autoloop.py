@@ -387,17 +387,28 @@ def copy_outputs_to_executor_output(created_outputs: List[str]) -> None:
 
 
 def write_executor_runner_script(executor_dir: Path, created_outputs_json_name: str = "created_outputs.json") -> Path:
-    runner_path = executor_dir / "run_dynamic_class.py"
+    """
+    Creates ../executorOutput/run_RunClass.py
+
+    The generated runner (run_RunClass.py), when executed inside executorOutput:
+      - reads created_outputs_json_name to get "dynamic_class_creator_class"
+      - copies RunClass.class from the executionAgent folder (parent of executorOutput) into executorOutput (if missing)
+      - runs: java -cp ".:./*" RunClass --class <targetClass>
+        (Windows uses ';' separator automatically)
+    """
+    runner_path = executor_dir / "run_RunClass.py"
 
     content = f'''\
-# run_dynamic_class.py
+# run_RunClass.py
 #
-# Runs the Java class recorded under "dynamic_class_creator_class" in {created_outputs_json_name}.
-# Copies all "created_outputs" into ./run_sandbox first, then executes:
-#   java -cp ./run_sandbox <MainClass>
+# Reads "{created_outputs_json_name}" in this folder to find "dynamic_class_creator_class",
+# ensures RunClass.class exists here (copied from the executionAgent folder = parent of executorOutput),
+# then runs:
+#
+#   java -cp <THIS_DIR and all jars> RunClass --class <dynamic_class_creator_class>
 #
 # Usage:
-#   python run_dynamic_class.py
+#   python run_RunClass.py
 #
 # Optional env:
 #   JAVA_BIN=java
@@ -406,16 +417,19 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
-from typing import Any, Dict, List
-
 
 HERE = Path(__file__).resolve().parent
 CREATED_JSON = HERE / "{created_outputs_json_name}"
-SANDBOX = HERE / "run_sandbox"
+
+# Assumption: executorOutput is a sibling of executionAgent directory,
+# so HERE.parent points to the executionAgent folder.
+SOURCE_RUNCLASS = (HERE.parent / "RunClass.class").resolve()
+TARGET_RUNCLASS = HERE / "RunClass.class"
 
 
-def read_payload() -> Dict[str, Any]:
+def read_payload():
     if not CREATED_JSON.exists():
         raise SystemExit(f"[ERR] missing {{CREATED_JSON}}")
     try:
@@ -427,54 +441,59 @@ def read_payload() -> Dict[str, Any]:
     return obj
 
 
-def ensure_clean_dir(p: Path) -> None:
-    if p.exists():
-        shutil.rmtree(p, ignore_errors=True)
-    p.mkdir(parents=True, exist_ok=True)
+def ensure_runclass():
+    if TARGET_RUNCLASS.exists():
+        return
+    if not SOURCE_RUNCLASS.exists():
+        raise SystemExit(f"[ERR] RunClass.class not found at {{SOURCE_RUNCLASS}}")
+    shutil.copy2(SOURCE_RUNCLASS, TARGET_RUNCLASS)
+    print(f"[OK] Copied RunClass.class -> {{TARGET_RUNCLASS}}")
 
 
-def copy_into_sandbox(files: List[str]) -> None:
-    for rel in files:
-        src = (HERE / rel)
-        if not src.exists() or not src.is_file():
-            src2 = HERE / Path(rel).name
-            if src2.exists() and src2.is_file():
-                src = src2
-            else:
-                print(f"[WARN] missing: {{rel}}")
-                continue
-        dst = SANDBOX / src.name
-        shutil.copy2(src, dst)
+def normalize_class_arg(s: str) -> str:
+    # Accept "WebcamAscii.class" or "WebcamAscii"
+    s = s.strip()
+    if s.lower().endswith(".class"):
+        s = s[:-6]
+    return s
 
 
-def main() -> None:
+def build_classpath() -> str:
+    # Include THIS DIR plus all jars in this dir via wildcard.
+    # Windows uses ';' separator, Unix uses ':'.
+    sep = ";" if os.name == "nt" else ":"
+    return sep.join([".", "./*"])
+
+
+def main():
+    ensure_runclass()
+
     payload = read_payload()
-
-    created_outputs = payload.get("created_outputs", [])
-    if not isinstance(created_outputs, list):
-        created_outputs = []
-
     dyn = payload.get("dynamic_class_creator_class")
     if not isinstance(dyn, str) or not dyn.strip():
         raise SystemExit("[ERR] dynamic_class_creator_class missing/null in created_outputs.json")
 
-    main_class = Path(dyn).name
-    if main_class.lower().endswith(".class"):
-        main_class = main_class[:-6]
-
-    ensure_clean_dir(SANDBOX)
-    copy_into_sandbox([x for x in created_outputs if isinstance(x, str)])
+    target = normalize_class_arg(dyn)
 
     java_bin = os.getenv("JAVA_BIN", "java")
-    cmd = [java_bin, "-cp", str(SANDBOX), main_class]
+    cp = build_classpath()
+
+    cmd = [java_bin, "-cp", cp, "RunClass", "--class", target]
 
     print("[RUN]", " ".join(cmd))
-    res = subprocess.run(cmd, cwd=str(HERE), capture_output=True, text=True, encoding="utf-8", errors="replace")
+    res = subprocess.run(
+        cmd,
+        cwd=str(HERE),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
     if res.stdout:
         print(res.stdout)
     if res.stderr:
-        print(res.stderr)
+        print(res.stderr, file=sys.stderr)
 
     raise SystemExit(res.returncode)
 
@@ -484,6 +503,7 @@ if __name__ == "__main__":
 '''
     runner_path.write_text(content, encoding="utf-8")
     return runner_path
+
 
 
 # ==========================================================
