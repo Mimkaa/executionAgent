@@ -488,21 +488,12 @@ def main():
     cp = build_classpath()
     cmd = [java_bin, "-cp", cp, "RunClass", "--class", target]
 
-    print("[RUN]", " ".join(cmd))
+    print("[RUN]", " ".join(cmd), flush=True)
+
     res = subprocess.run(
         cmd,
         cwd=str(HERE),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
     )
-
-    if res.stdout:
-        print(res.stdout)
-    if res.stderr:
-        print(res.stderr, file=sys.stderr)
-
     raise SystemExit(res.returncode)
 
 
