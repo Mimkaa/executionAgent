@@ -180,7 +180,8 @@ def download_java(script_name: str) -> None:
 
 def compile_java(script_name: str) -> None:
     cp = build_classpath()
-    cmd = [JAVAC_CMD, "-cp", cp, f"{script_name}.java"]
+    # FIX: Force UTF-8 so javac doesn't use Windows-1252 and fail on Unicode chars
+    cmd = [JAVAC_CMD, "-encoding", "UTF-8", "-cp", cp, f"{script_name}.java"]
     res = subprocess.run(
         cmd,
         cwd=str(WORK_DIR),
