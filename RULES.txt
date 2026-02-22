@@ -171,6 +171,8 @@ No alternatives are permitted.
 
 GLOBAL PIPE RULES
 -----------------
+Rule 1 - the name of the main class that is being created and serves as entry point must be named Main.class
+
 Rule 2 — Pipeline execution is strictly sequential.
 
 Rule 3 — Commands must be separated by EXACTLY two blank lines.
