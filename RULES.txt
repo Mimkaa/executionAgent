@@ -234,6 +234,8 @@ Implications:
 - Fields are declared once.
 - Changing field semantics requires a NEW field name.
 
+Rule 9 The class you are creating should have some kind of an output (like System.println(...)) in the main method, to direct the iterative execution of the following adjusting steps
+
 
 STANDARD METHOD CONSTRUCTION PIPELINE
 -------------------------------------
