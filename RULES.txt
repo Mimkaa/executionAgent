@@ -171,7 +171,9 @@ No alternatives are permitted.
 
 GLOBAL PIPE RULES
 -----------------
-Rule 0 - creation of .ready(no extension and without using CreateTextFile) file will terminate the loop unconditionally
+Rule 0 - Creation of a file named .ready (no extension and without using CreateTextFile) in the current working directory will terminate the loop unconditionally.
+
+Rule 0.1 If the program contains any while loop (including infinite loops such as while(true)), the loop must mandatorily include a condition that continuously checks whether a file named .ready exists in the same working directory. Upon detection of the .ready file, the loop must terminate immediately without performing further iterations.
 
 Rule 1 - the name of the main class that is being created and serves as entry point must be named Main.class
 
