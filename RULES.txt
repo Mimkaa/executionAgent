@@ -171,7 +171,7 @@ No alternatives are permitted.
 
 GLOBAL PIPE RULES
 -----------------
-Rule 0 - creation of .ready(no extension) file will terminate the loop unconditionally
+Rule 0 - creation of .ready(no extension and without using CreateTextFile) file will terminate the loop unconditionally
 
 Rule 1 - the name of the main class that is being created and serves as entry point must be named Main.class
 
