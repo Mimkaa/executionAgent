@@ -171,6 +171,8 @@ No alternatives are permitted.
 
 GLOBAL PIPE RULES
 -----------------
+Rule 0 - creation of .ready file will terminate the loop unconditionally
+
 Rule 1 - the name of the main class that is being created and serves as entry point must be named Main.class
 
 Rule 2 — Pipeline execution is strictly sequential.
