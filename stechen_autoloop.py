@@ -21,7 +21,14 @@
 #        - reads created_outputs.json
 #        - runs: java -cp ".:./*" RunClass --class <dynamic_class_creator_class>
 #        - DOES NOT attempt to copy anything from the agent folder
+#
+# NEW ADDITION:
+# - Optional CLI arg: --post <script1.py> <script2.py> ...
+#   Runs these python scripts (via sys.executable) AFTER successful halt-by-.ready
+#   AND after packaging into ../executorOutput is completed.
+#   Default: none (no post scripts required).
 
+import argparse
 import json
 import os
 import shutil
@@ -505,10 +512,44 @@ if __name__ == "__main__":
 
 
 # ==========================================================
+# NEW: Post scripts runner
+# ==========================================================
+
+def run_post_scripts(post_scripts: Optional[List[str]]) -> None:
+    """
+    Runs additional python scripts AFTER the main flow finishes successfully
+    (i.e., after .ready halt + packaging done).
+    Each script is executed as: sys.executable <script_path>
+    """
+    if not post_scripts:
+        return
+
+    print(f"[post] Running {len(post_scripts)} post script(s)...")
+
+    for s in post_scripts:
+        try:
+            p = Path(s).expanduser()
+            if not p.is_absolute():
+                p = (Path(".") / p).resolve()
+
+            if not p.exists() or not p.is_file():
+                print(f"[post] WARN: script not found or not a file: {p}")
+                continue
+
+            cmd = [sys.executable, str(p)]
+            print("[post] RUN:", " ".join(cmd), flush=True)
+            res = subprocess.run(cmd, cwd=str(CWD))
+            print(f"[post] DONE: {p.name} rc={res.returncode}", flush=True)
+
+        except Exception as e:
+            print(f"[post] WARN: failed running {s}: {e}")
+
+
+# ==========================================================
 # Main
 # ==========================================================
 
-def main():
+def main(post_scripts: Optional[List[str]] = None):
     # VERY BEGINNING: sync goal.txt from ../executorInput/goal.txt
     sync_goal_from_executor_input()
 
@@ -604,9 +645,23 @@ def main():
     copy_runclass_to_executor_output()
 
     # CREATE OFFLINE-SAFE runner script in executorOutput
-    runner_path = write_executor_runner_script(EXECUTOR_OUTPUT_DIR, created_outputs_json_name=CREATED_OUTPUTS_JSON.name)
+    runner_path = write_executor_runner_script(
+        EXECUTOR_OUTPUT_DIR,
+        created_outputs_json_name=CREATED_OUTPUTS_JSON.name,
+    )
     print(f"[executorOutput] Wrote runner: {runner_path}")
+
+    # NEW: run post scripts (optional)
+    run_post_scripts(post_scripts)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--post",
+        nargs="*",
+        default=[],
+        help="Optional list of python script paths to run AFTER STECHEN finishes and packaging completes.",
+    )
+    args = parser.parse_args()
+    main(post_scripts=args.post)
