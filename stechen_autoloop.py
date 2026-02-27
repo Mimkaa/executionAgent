@@ -27,6 +27,9 @@
 #   Runs these python scripts (via sys.executable) AFTER successful halt-by-.ready
 #   AND after packaging into ../executorOutput is completed.
 #   Default: none (no post scripts required).
+#
+# MODIFICATION:
+# - Halt if EITHER ".ready" OR ".ready.txt" exists.
 
 import argparse
 import json
@@ -62,6 +65,7 @@ SLEEP_BETWEEN_ITERATIONS_SEC = 0.2
 # --------------------------------------------------
 CWD = Path(".").resolve()
 READY_FILE = (CWD / ".ready").resolve()
+READY_FILE_TXT = (CWD / ".ready.txt").resolve()
 
 CONDUCTED_DIR = (CWD / "conductedWork").resolve()
 CONDUCTED_DIR.mkdir(parents=True, exist_ok=True)
@@ -91,7 +95,6 @@ SKIP_FILE_SUFFIXES = {
     ".log",
 }
 
-
 # ==========================================================
 # Begin hook: copy goal from ../executorInput/goal.txt -> ./goal.txt
 # ==========================================================
@@ -112,7 +115,6 @@ def sync_goal_from_executor_input() -> None:
     except Exception as e:
         print(f"[goal] WARN: failed to sync goal.txt: {e}")
 
-
 # ==========================================================
 # Helpers: file snapshot + diff
 # ==========================================================
@@ -124,7 +126,6 @@ def _should_skip_path(p: Path) -> bool:
     if p.suffix.lower() in SKIP_FILE_SUFFIXES:
         return True
     return False
-
 
 def snapshot_tree(root: Path) -> Dict[str, float]:
     out: Dict[str, float] = {}
@@ -144,7 +145,6 @@ def snapshot_tree(root: Path) -> Dict[str, float]:
         except Exception:
             continue
     return out
-
 
 def diff_snapshots(before: Dict[str, float], after: Dict[str, float]) -> Dict[str, List[str]]:
     created: List[str] = []
@@ -168,7 +168,6 @@ def diff_snapshots(before: Dict[str, float], after: Dict[str, float]) -> Dict[st
 
     return {"created": created, "modified": modified, "deleted": deleted}
 
-
 # ==========================================================
 # Helpers: read latest executed step info from stechen.db
 # ==========================================================
@@ -177,7 +176,6 @@ def connect_db(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
-
 
 def get_latest_pipeline_step(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
     try:
@@ -188,7 +186,6 @@ def get_latest_pipeline_step(conn: sqlite3.Connection) -> Optional[Dict[str, Any
         return dict(row) if row else None
     except Exception:
         return None
-
 
 def get_latest_pipelineLong_step_and_result(conn: sqlite3.Connection) -> Dict[str, Any]:
     out: Dict[str, Any] = {"step_log": None, "result_log": None}
@@ -223,14 +220,12 @@ def get_latest_pipelineLong_step_and_result(conn: sqlite3.Connection) -> Dict[st
     except Exception:
         return out
 
-
 def short(s: Optional[str], n: int = 300) -> Optional[str]:
     if s is None:
         return None
     if len(s) <= n:
         return s
     return s[:n] + "...<TRUNCATED>..."
-
 
 # ==========================================================
 # Runner + conductedWork writer
@@ -242,7 +237,6 @@ def write_conducted_record(record: Dict[str, Any]) -> Path:
     out_path = CONDUCTED_DIR / fname
     out_path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     return out_path
-
 
 def run_and_record(cmd, label: str) -> bool:
     before = snapshot_tree(WORK_DIR)
@@ -302,7 +296,6 @@ def run_and_record(cmd, label: str) -> bool:
 
     return True
 
-
 # ==========================================================
 # Bootstrap logic
 # ==========================================================
@@ -351,7 +344,6 @@ def bootstrap_bytebuddy() -> bool:
     label = "BOOTSTRAP EXECUTOR (ByteBuddy)" if inserted else "BOOTSTRAP EXECUTOR (already present)"
     return run_and_record(EXECUTOR_CMD, label)
 
-
 # ==========================================================
 # Post-halt: copy created outputs + RunClass.* into ../executorOutput
 # ==========================================================
@@ -364,7 +356,6 @@ def load_created_outputs_payload(path: Path) -> Dict[str, Any]:
     except Exception:
         return {}
     return obj if isinstance(obj, dict) else {}
-
 
 def copy_outputs_to_executor_output(created_outputs: List[str]) -> None:
     EXECUTOR_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -394,7 +385,6 @@ def copy_outputs_to_executor_output(created_outputs: List[str]) -> None:
     if missing:
         print(f"[executorOutput] Missing/failed: {missing}")
 
-
 def copy_runclass_to_executor_output() -> None:
     """
     Copies RunClass.class and RunClass.java from CURRENT working directory (executionAgent)
@@ -419,7 +409,6 @@ def copy_runclass_to_executor_output() -> None:
 
     if copied == 0:
         print("[executorOutput] WARN: RunClass files were not copied (none found).")
-
 
 def write_executor_runner_script(executor_dir: Path, created_outputs_json_name: str = "created_outputs.json") -> Path:
     """
@@ -510,7 +499,6 @@ if __name__ == "__main__":
     runner_path.write_text(content, encoding="utf-8")
     return runner_path
 
-
 # ==========================================================
 # NEW: Post scripts runner
 # ==========================================================
@@ -544,7 +532,6 @@ def run_post_scripts(post_scripts: Optional[List[str]]) -> None:
         except Exception as e:
             print(f"[post] WARN: failed running {s}: {e}")
 
-
 # ==========================================================
 # Main
 # ==========================================================
@@ -572,8 +559,9 @@ def main(post_scripts: Optional[List[str]] = None):
     halted_by_ready = False
 
     while True:
-        if READY_FILE.exists():
-            print(f"\n[HALT] Found .ready file: {READY_FILE}")
+        if READY_FILE.exists() or READY_FILE_TXT.exists():
+            found = READY_FILE if READY_FILE.exists() else READY_FILE_TXT
+            print(f"\n[HALT] Found ready file: {found}")
             halted_by_ready = True
             break
 
@@ -588,8 +576,9 @@ def main(post_scripts: Optional[List[str]] = None):
         if not run_and_record(EXECUTOR_CMD, "SINGLE STEP EXECUTOR"):
             break
 
-        if READY_FILE.exists():
-            print(f"\n[HALT] Found .ready file after execution: {READY_FILE}")
+        if READY_FILE.exists() or READY_FILE_TXT.exists():
+            found = READY_FILE if READY_FILE.exists() else READY_FILE_TXT
+            print(f"\n[HALT] Found ready file after execution: {found}")
             halted_by_ready = True
             break
 
@@ -653,7 +642,6 @@ def main(post_scripts: Optional[List[str]] = None):
 
     # NEW: run post scripts (optional)
     run_post_scripts(post_scripts)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
